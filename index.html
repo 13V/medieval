@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Medieval Siege — Hex Tower Defense</title>
+    <link rel="preload" href="/fonts/cinzel.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/cinzel-decorative-900.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -49,6 +51,7 @@
       </div>
 
       <div class="speed-bar">
+        <div id="prep-timer" class="prep-timer hidden"><span class="sand">⏳</span><span class="secs"></span></div>
         <button class="btn primary" id="btn-start">&#9654; START WAVE</button>
         <div class="speed-group">
           <button class="btn speed" id="btn-pause" title="Pause">&#10074;&#10074;</button>

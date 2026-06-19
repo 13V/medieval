@@ -22,34 +22,38 @@ export class Hud {
   _buildTowerButtons() {
     const bar = $('build-bar');
     this.towerBtns = {};
-    for (const id of TOWER_ORDER) {
+    TOWER_ORDER.forEach((id, i) => {
       const t = TOWERS[id];
       const b = document.createElement('button');
       b.className = 'build-btn';
       b.innerHTML =
+        `<span class="hotkey">${i + 1}</span>` +
         `<div class="swatch" style="background:${t.swatch}"></div>` +
         `<div class="bname">${t.emoji} ${t.name}</div>` +
         `<div class="bcost">${t.levels[0].cost}</div>`;
-      b.title = t.desc;
+      b.title = `${t.name} — ${t.desc} (key ${i + 1})`;
       b.addEventListener('click', () => this.game.selectTowerType(id));
       bar.appendChild(b);
       this.towerBtns[id] = b;
-    }
+    });
   }
 
   _buildAbilityButtons() {
     const bar = $('ability-bar');
     this.abilityBtns = {};
-    for (const id of ABILITY_ORDER) {
+    const keys = ['Q', 'E', 'R', 'F'];
+    ABILITY_ORDER.forEach((id, i) => {
       const a = ABILITIES[id];
       const el = document.createElement('button');
       el.className = 'ability';
-      el.innerHTML = `<span class="em">${a.emoji}</span><span class="nm">${a.name}</span><div class="cd"></div>`;
-      el.title = a.name;
+      el.innerHTML =
+        `<span class="hotkey">${keys[i] || ''}</span>` +
+        `<span class="em">${a.emoji}</span><span class="nm">${a.name}</span><div class="cd"></div>`;
+      el.title = `${a.name} (key ${keys[i] || ''})`;
       el.addEventListener('click', () => this.game.armAbility(id));
       bar.appendChild(el);
       this.abilityBtns[id] = el;
-    }
+    });
   }
 
   _wireControls() {
@@ -110,18 +114,45 @@ export class Hud {
   }
 
   setCastle(hp, max) {
-    $('hp-fill').style.width = `${Math.max(0, hp / max) * 100}%`;
+    const frac = Math.max(0, hp / max);
+    $('hp-fill').style.width = `${frac * 100}%`;
     $('hp-text').textContent = `${Math.max(0, Math.ceil(hp))} / ${max}`;
 
-    // Pulse the heart when HP is low (below 30%)
+    // Graduated colour: green → amber → red, plus a low-HP pulse.
     const panel = $('castle-hp-panel');
-    if (panel) panel.classList.toggle('low', hp / max < 0.30);
+    if (panel) {
+      panel.classList.toggle('low', frac < 0.30);
+      panel.classList.toggle('hp-warn', frac < 0.55 && frac >= 0.30);
+      panel.classList.toggle('hp-crit', frac < 0.30);
+    }
   }
 
   setGold(g) {
     this.gold = g;
-    $('gold').textContent = Math.floor(g);
+    const el = $('gold');
+    const val = Math.floor(g);
+    if (el && el.textContent !== String(val)) {
+      el.textContent = val;
+      // Pop the counter (and spin the coin) whenever the amount changes.
+      el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
+      const coin = document.querySelector('.top-right .coin');
+      if (coin) { coin.classList.remove('spin'); void coin.offsetWidth; coin.classList.add('spin'); }
+    } else if (el) {
+      el.textContent = val;
+    }
     this._refreshAffordable();
+  }
+
+  // Prominent prep countdown shown above the START WAVE button.
+  setPrep(secs) {
+    const el = $('prep-timer');
+    if (!el) return;
+    if (secs == null || secs <= 0) { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    const s = Math.max(0, Math.ceil(secs));
+    const out = el.querySelector('.secs');
+    if (out) out.textContent = `${s}s`;
+    el.classList.toggle('urgent', s <= 5);
   }
 
   _refreshAffordable() {
@@ -136,6 +167,7 @@ export class Hud {
   setStartButton(visible, label) {
     const b = $('btn-start');
     b.style.display = visible ? '' : 'none';
+    b.classList.toggle('callout', !!visible);
     if (label) b.textContent = label;
   }
   setSpeed(n) {

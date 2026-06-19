@@ -23,7 +23,7 @@ import { Effects } from './effects.js';
 import { WaveManager } from './waves.js';
 import { Enemy, Tower, Projectile, PROJECTILES } from './entities.js';
 import {
-  MODELS, TOWERS, TOWER_ORDER, ENEMIES, ABILITIES, ECONOMY, CASTLE, COLORS, generateWaves,
+  MODELS, TOWERS, TOWER_ORDER, ENEMIES, ABILITIES, ABILITY_ORDER, ECONOMY, CASTLE, COLORS, generateWaves,
 } from './config.js';
 
 const now = () => performance.now() / 1000;
@@ -181,8 +181,17 @@ export class Game {
     });
     dom.addEventListener('pointerleave', () => { this.ghost.visible = false; });
     window.addEventListener('keydown', (e) => {
+      if (e.repeat) return;
+      const k = e.key.toLowerCase();
       if (e.key === 'Escape') this._clearSelections();
       else if (e.key === ' ') { e.preventDefault(); if (this.state === 'prep') this.onStartButton(); }
+      // 1-4 select a tower to build
+      else if (k >= '1' && k <= String(TOWER_ORDER.length)) {
+        this.selectTowerType(TOWER_ORDER[parseInt(k, 10) - 1]);
+      }
+      // Q / E arm hero abilities
+      else if (k === 'q' && ABILITY_ORDER[0]) this.armAbility(ABILITY_ORDER[0]);
+      else if (k === 'e' && ABILITY_ORDER[1]) this.armAbility(ABILITY_ORDER[1]);
     });
   }
 
@@ -264,8 +273,8 @@ export class Game {
     this.hud.setWave(this.waveIndex + 1, this.waves.length);
     this.hud.setWaveProgress(0);
     this.hud.setStartButton(true, '▶ START WAVE');
-    const label = wave.isBoss ? '⚠ BOSS WAVE — prepare!' : 'Build &amp; upgrade — wave incoming';
     this.hud.setWaveState(`Prep ${Math.ceil(this.prepTimer)}s`);
+    this.hud.setPrep(this.prepTimer);
     this.hud.toast(wave.isBoss ? '⚠ Boss wave next!' : `Wave ${this.waveIndex + 1} — prepare your defenses`);
   }
 
@@ -279,6 +288,7 @@ export class Game {
   _startWave() {
     this.state = 'wave';
     this.hud.setStartButton(false);
+    this.hud.setPrep(null);
     this.hud.setWaveState('Wave in progress');
     this.waveManager.begin(this.waves[this.waveIndex]);
   }
@@ -533,6 +543,7 @@ export class Game {
     if (this.state === 'prep' && sdt > 0) {
       this.prepTimer -= sdt;
       this.hud.setWaveState(`Prep ${Math.max(0, Math.ceil(this.prepTimer))}s`);
+      this.hud.setPrep(this.prepTimer);
       if (this.prepTimer <= 0) this._startWave();
     }
 
