@@ -135,22 +135,12 @@ export class Board {
     this.group.add(castle);
     this.castle = castle;
 
-    this._buildWaterRing(cols, rows);
     this._decorate(cols, rows, pathKeys);
     this._rockyAccents(cols, rows, pathKeys);
     this._buildIslandBase();
     this._buildCliffs();
     this._buildBackdropMountain();
-
-    // ---- deep-water backdrop ----
-    const backdrop = new THREE.Mesh(
-      new THREE.PlaneGeometry(this.radius * 10, this.radius * 10),
-      new THREE.MeshStandardMaterial({ color: COLORS.waterBackdrop, roughness: 0.7, metalness: 0.15 })
-    );
-    backdrop.rotation.x = -Math.PI / 2;
-    backdrop.position.y = -1.6;
-    backdrop.receiveShadow = true;
-    this.scene.add(backdrop);
+    // The sea is provided by src/water.js (animated); the rocky base sits in it.
   }
 
   // Rock "padding" on downhill slopes + a rocky skirt under the castle + shore framing.

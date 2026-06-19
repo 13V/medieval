@@ -4,6 +4,13 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createPostFX } from './postfx.js';
+import { createSky } from './sky.js';
+import { createClouds } from './clouds.js';
+import { createWater } from './water.js';
+import { createFoliage } from './foliage.js';
+import { createAtmosphere } from './atmosphere.js';
+import { createWildlife } from './wildlife.js';
+import { createAnimProps } from './animprops.js';
 
 import { Assets } from './assets.js';
 import { Board } from './board.js';
@@ -190,6 +197,18 @@ export class Game {
     this.board = new Board(this.scene, this.assets);
     this.board.build();
     this._frameCamera();
+
+    // ambient visual modules (each returns { update(dt, camera), dispose() })
+    this.fx = [
+      createSky(this.scene, this.board),
+      createWater(this.scene, this.board),
+      createClouds(this.scene, this.board),
+      createFoliage(this.scene, this.board),
+      createAtmosphere(this.scene, this.board),
+      createWildlife(this.scene, this.board),
+      createAnimProps(this.scene, this.board),
+    ];
+
     this.hud.hideLoading();
     this.hud.showStart();
     this.state = 'menu';
@@ -533,6 +552,7 @@ export class Game {
     }
 
     this.effects.update(dt);
+    if (this.fx) for (const f of this.fx) f.update(dt, this.camera);
     this.controls.update();
 
     // camera shake
