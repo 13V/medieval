@@ -138,6 +138,7 @@ export class Board {
     this._decorate(cols, rows, pathKeys);
     this._rockyAccents(cols, rows, pathKeys);
     this._buildIslandBase();
+    this._buildCliffs();
 
     // ---- deep-water backdrop ----
     const backdrop = new THREE.Mesh(
@@ -190,34 +191,64 @@ export class Board {
       placeRock(cp.x + Math.cos(a) * d, cp.y - 0.15, cp.z + Math.sin(a) * d, 0.6 + rng() * 0.6);
     }
 
-    // 3) rocky shore: ring of larger rocks just outside the board border (grey cliffs)
-    for (let i = 0; i < 26; i++) {
-      const a = (i / 26) * Math.PI * 2;
-      const d = this.radius * (1.02 + rng() * 0.18);
-      placeRock(Math.cos(a) * d, BASE_LIFT - 0.8, Math.sin(a) * d, 0.9 + rng() * 1.1);
-    }
+    // (the rocky cliff face is built from mountain models in _buildCliffs)
   }
 
-  // Solid earth + rock pedestal beneath the island (the "on a hill" look).
+  // Hidden bulk under the island: a thin dirt rim + a solid grey rock core.
+  // The visible cliff face is built from mountain models in _buildCliffs().
   _buildIslandBase() {
     const R = this.radius;
     const top = BASE_LIFT - 0.05;
     const soil = new THREE.Mesh(
-      new THREE.CylinderGeometry(R * 1.04, R * 0.94, 1.2, 11, 1),
-      new THREE.MeshStandardMaterial({ color: 0x7a5230, roughness: 1, flatShading: true })
+      new THREE.CylinderGeometry(R * 0.98, R * 0.9, 0.7, 12, 1),
+      new THREE.MeshStandardMaterial({ color: 0x6f4a2a, roughness: 1, flatShading: true })
     );
-    soil.position.y = top - 0.6;
-    soil.receiveShadow = true; soil.castShadow = true;
+    soil.position.y = top - 0.35;
+    soil.receiveShadow = true;
     this.group.add(soil);
 
-    const rockTop = top - 1.2, rockBottom = -0.6;
-    const rock = new THREE.Mesh(
-      new THREE.CylinderGeometry(R * 0.94, R * 0.6, rockTop - rockBottom, 9, 1),
-      new THREE.MeshStandardMaterial({ color: 0x8a8377, roughness: 1, flatShading: true })
+    const rockTop = top - 0.7, rockBottom = -0.8;
+    const core = new THREE.Mesh(
+      new THREE.CylinderGeometry(R * 0.9, R * 0.5, rockTop - rockBottom, 10, 1),
+      new THREE.MeshStandardMaterial({ color: 0x7d766b, roughness: 1, flatShading: true })
     );
-    rock.position.y = (rockTop + rockBottom) / 2;
-    rock.receiveShadow = true; rock.castShadow = true;
-    this.group.add(rock);
+    core.position.y = (rockTop + rockBottom) / 2;
+    core.receiveShadow = true;
+    this.group.add(core);
+  }
+
+  // Craggy rocky cliff face around the island + a rocky peak under the castle
+  // (KayKit "create rocky landscapes" pattern, matching the promo dioramas).
+  _buildCliffs() {
+    const R = this.radius;
+    let seed = 7;
+    const rng = () => { seed = (seed * 1664525 + 1013904223) & 0xffffffff; return (seed >>> 0) / 0xffffffff; };
+    const cliffs = MODELS.decoCliffs;
+    const place = (model, x, y, z, sc) => {
+      const o = this.assets.instance(model, { scale: sc, groundAlign: true });
+      o.position.set(x, y, z); o.rotation.y = rng() * Math.PI * 2;
+      this.group.add(o);
+    };
+    // main cliff ring: tall grey mountains just OUTSIDE the tile edge, spanning
+    // water → island rim, dense + overlapping for a continuous craggy wall.
+    const N = 32;
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2;
+      const d = R * (1.0 + rng() * 0.12);
+      place(cliffs[Math.floor(rng() * cliffs.length)], Math.cos(a) * d, -0.85, Math.sin(a) * d, 1.9 + rng() * 1.0);
+      // lower outer boulders at the waterline for a layered coastline
+      if (rng() < 0.8) {
+        const a2 = a + (rng() - 0.5) * 0.16, d2 = R * (1.14 + rng() * 0.12);
+        place(cliffs[Math.floor(rng() * cliffs.length)], Math.cos(a2) * d2, -0.95, Math.sin(a2) * d2, 1.0 + rng() * 0.8);
+      }
+    }
+    // rocky grass-topped peak collar under the castle
+    const cp = this.castlePos, cg = MODELS.decoCliffGrass;
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + 0.4;
+      const d = this.size * (0.85 + rng() * 0.5);
+      place(cg[i % cg.length], cp.x + Math.cos(a) * d, cp.y - 1.4, cp.z + Math.sin(a) * d, 0.7 + rng() * 0.5);
+    }
   }
 
   _buildWaterRing(cols, rows) {

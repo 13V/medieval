@@ -45,6 +45,13 @@ export const MODELS = {
     'decoration/props/tent.gltf',
     'decoration/props/resource_stone.gltf',
     'decoration/props/resource_lumber.gltf',
+    // mountains / cliffs — rocky island sides & castle peak
+    'decoration/nature/mountain_A.gltf',
+    'decoration/nature/mountain_B.gltf',
+    'decoration/nature/mountain_C.gltf',
+    'decoration/nature/mountain_A_grass.gltf',
+    'decoration/nature/mountain_B_grass.gltf',
+    'decoration/nature/mountain_C_grass.gltf',
   ],
 
   // Sub-arrays for board.js to pick from (paths must be a subset of decoTrees above).
@@ -77,6 +84,16 @@ export const MODELS = {
     'decoration/props/tent.gltf',
     'decoration/props/resource_stone.gltf',
     'decoration/props/resource_lumber.gltf',
+  ],
+  decoCliffs: [
+    'decoration/nature/mountain_A.gltf',
+    'decoration/nature/mountain_B.gltf',
+    'decoration/nature/mountain_C.gltf',
+  ],
+  decoCliffGrass: [
+    'decoration/nature/mountain_A_grass.gltf',
+    'decoration/nature/mountain_B_grass.gltf',
+    'decoration/nature/mountain_C_grass.gltf',
   ],
 };
 

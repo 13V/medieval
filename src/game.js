@@ -3,7 +3,6 @@
 // ============================================================================
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { Sky } from 'three/addons/objects/Sky.js';
 import { createPostFX } from './postfx.js';
 
 import { Assets } from './assets.js';
@@ -18,6 +17,21 @@ import {
 } from './config.js';
 
 const now = () => performance.now() / 1000;
+
+// Clean vertical gradient sky (screen-space) — no atmospheric horizon glare.
+function makeSkyGradient() {
+  const c = document.createElement('canvas');
+  c.width = 2; c.height = 256;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0.0, '#5b9bd9');  // zenith
+  grad.addColorStop(0.55, '#9fcdee');
+  grad.addColorStop(1.0, '#dcefff');  // horizon
+  g.fillStyle = grad; g.fillRect(0, 0, 2, 256);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
 
 export class Game {
   constructor(container) {
@@ -93,26 +107,13 @@ export class Game {
     this.controls.minDistance = 8;
     this.controls.maxDistance = 60;
 
-    // ---- Sky dome --------------------------------------------------------
-    const sky = new Sky();
-    sky.scale.setScalar(450);
-    this.scene.add(sky);
+    // ---- Clean gradient sky (no atmospheric horizon glare) ---------------
+    this.scene.background = makeSkyGradient();
 
-    // Sun direction derived from elevation + azimuth so it matches the light.
-    // elevation 28°, azimuth 135° (south-east)
-    const sunElevationDeg = 28;
-    const sunAzimuthDeg  = 135;
-    const phi   = THREE.MathUtils.degToRad(90 - sunElevationDeg);
-    const theta = THREE.MathUtils.degToRad(sunAzimuthDeg);
-    const sunDir = new THREE.Vector3();
-    sunDir.setFromSphericalCoords(1, phi, theta);
-
-    const skyUniforms = sky.material.uniforms;
-    skyUniforms['turbidity'].value        = 6;
-    skyUniforms['rayleigh'].value         = 2.2;
-    skyUniforms['mieCoefficient'].value   = 0.005;
-    skyUniforms['mieDirectionalG'].value  = 0.8;
-    skyUniforms['sunPosition'].value.copy(sunDir);
+    // Sun direction (elevation 28°, azimuth 135° south-east) drives the key light.
+    const phi = THREE.MathUtils.degToRad(90 - 28);
+    const theta = THREE.MathUtils.degToRad(135);
+    const sunDir = new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
 
     // ---- Lights ----------------------------------------------------------
     // Hemisphere: warm sky / earthy ground
@@ -197,8 +198,8 @@ export class Game {
   _frameCamera() {
     const R = this.board.radius;
     const by = this.board.baseY || 0;
-    this.camera.position.set(0, by + R * 0.92, R * 1.2);
-    this.controls.target.set(0, by + 0.2, 0);
+    this.camera.position.set(0, by + R * 0.84, R * 1.26);
+    this.controls.target.set(0, by - 0.1, 0);
     this.controls.minDistance = R * 0.45;
     this.controls.maxDistance = R * 2.6;
     this.controls.update();
