@@ -179,8 +179,7 @@ export class Enemy {
     const next = this.points[this.seg + 1];
     if (!next) { this._reachCastle(); return; }
     const pos = this.obj.position;
-    this._tmp.subVectors(next, pos);
-    this._tmp.y = 0;
+    this._tmp.subVectors(next, pos); // 3D — follow terrain height along the ramp
     const dist = this._tmp.length();
     const step = speed * dt;
     if (dist <= step || dist < 1e-4) {

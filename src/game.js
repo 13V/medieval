@@ -70,8 +70,9 @@ export class Game {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.1;
+    // Reinhard keeps the bright cartoon palette saturated (ACES washes low-poly colours out).
+    this.renderer.toneMapping = THREE.ReinhardToneMapping;
+    this.renderer.toneMappingExposure = 1.5;
     this.container.appendChild(this.renderer.domElement);
   }
 
@@ -80,7 +81,7 @@ export class Game {
     // Sky dome handles background — no flat color needed.
     // Fog color: light sky-blue matching the horizon; near/far tuned so board
     // edges fade into haze rather than darkness.
-    this.scene.fog = new THREE.Fog(0xcfe6f5, 55, 140);
+    this.scene.fog = new THREE.Fog(0xcfe8f8, 170, 480);
 
     this.camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 400);
     this.camera.position.set(0, 16, 18);
@@ -88,7 +89,7 @@ export class Game {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.maxPolarAngle = 1.45;
+    this.controls.maxPolarAngle = 1.05;
     this.controls.minDistance = 8;
     this.controls.maxDistance = 60;
 
@@ -115,11 +116,11 @@ export class Game {
 
     // ---- Lights ----------------------------------------------------------
     // Hemisphere: warm sky / earthy ground
-    const hemi = new THREE.HemisphereLight(0xbfe3ff, 0x5d7a3a, 0.7);
+    const hemi = new THREE.HemisphereLight(0xcfeaff, 0x6f9a52, 0.95);
     this.scene.add(hemi);
 
     // Directional sun: warm, crisp shadows, position aligned with sky sun
-    const sun = new THREE.DirectionalLight(0xfff2d4, 2.2);
+    const sun = new THREE.DirectionalLight(0xfff2d4, 2.5);
     sun.position.copy(sunDir).multiplyScalar(50);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -131,7 +132,7 @@ export class Game {
     this.scene.add(sun);
 
     // Soft ambient — kept very low so hemisphere + sun do the heavy lifting
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.12));
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.26));
 
     // Cool fill light from the opposite side for form/depth — no shadows
     const fill = new THREE.DirectionalLight(0x9bb8d8, 0.35);
@@ -195,10 +196,11 @@ export class Game {
 
   _frameCamera() {
     const R = this.board.radius;
-    this.camera.position.set(0, R * 1.05, R * 1.15);
-    this.controls.target.set(0, 0, 0);
+    const by = this.board.baseY || 0;
+    this.camera.position.set(0, by + R * 0.92, R * 1.2);
+    this.controls.target.set(0, by + 0.2, 0);
     this.controls.minDistance = R * 0.45;
-    this.controls.maxDistance = R * 2.4;
+    this.controls.maxDistance = R * 2.6;
     this.controls.update();
   }
 
@@ -320,22 +322,29 @@ export class Game {
     return this.raycaster.ray.intersectPlane(this.groundPlane, this._hit) ? this._hit : null;
   }
 
+  // Raycast the actual (elevated) tiles. Returns { point, data } or null.
+  _pickTerrain(e) {
+    this._ray(e);
+    const hits = this.raycaster.intersectObjects(this.board.tilePickables, true);
+    if (!hits.length) return null;
+    return { point: hits[0].point, data: this.board.tileData(hits[0].object) };
+  }
+
   _onHover(e) {
     if (this.state !== 'prep' && this.state !== 'wave') { this.ghost.visible = false; return; }
     if (!this.selectedTowerType) { if (!this.selectedTower) this.ghost.visible = false; return; }
-    const p = this._groundPoint(e);
-    if (!p) { this.ghost.visible = false; return; }
-    const { col, row } = this.board.worldToCell(p.x, p.z);
-    const cell = this.board.getBuildable(col, row);
+    const hit = this._pickTerrain(e);
+    if (!hit || !hit.data || hit.data.isPath) { this.ghost.visible = false; this.rangeRing.visible = false; return; }
+    const cell = this.board.getBuildable(hit.data.col, hit.data.row);
     const cost = TOWERS[this.selectedTowerType].levels[0].cost;
     if (cell && this.gold >= cost) {
       this.ghost.visible = true;
-      this.ghost.position.copy(cell.pos).setY(0.06);
+      this.ghost.position.copy(cell.pos); this.ghost.position.y += 0.12;
       this.ghost.material.color.set(COLORS.hoverOk);
       this._showRange(cell.pos, TOWERS[this.selectedTowerType].levels[0].range);
     } else if (cell) {
       this.ghost.visible = true;
-      this.ghost.position.copy(cell.pos).setY(0.06);
+      this.ghost.position.copy(cell.pos); this.ghost.position.y += 0.12;
       this.ghost.material.color.set(COLORS.hoverBad);
       this.rangeRing.visible = false;
     } else {
@@ -346,26 +355,29 @@ export class Game {
 
   _onClick(e) {
     if (this.state !== 'prep' && this.state !== 'wave') return;
-    const p = this._groundPoint(e);
-    if (!p) return;
 
-    if (this.armedAbility) { this._castAbility(this.armedAbility, p); return; }
+    // selecting a built tower takes priority (when not placing/aiming)
+    if (!this.selectedTowerType && !this.armedAbility) {
+      this._ray(e);
+      const tHits = this.raycaster.intersectObjects(this.towers.map((t) => t.obj), true);
+      if (tHits.length) {
+        const tower = this.towers.find((t) => this._owns(t.obj, tHits[0].object));
+        if (tower) { this._selectBuiltTower(tower); return; }
+      }
+    }
+
+    const hit = this._pickTerrain(e);
+    if (!hit) { this._deselectTower(); return; }
+
+    if (this.armedAbility) { this._castAbility(this.armedAbility, hit.point); return; }
 
     if (this.selectedTowerType) {
-      const { col, row } = this.board.worldToCell(p.x, p.z);
-      const cell = this.board.getBuildable(col, row);
+      const cell = hit.data && !hit.data.isPath ? this.board.getBuildable(hit.data.col, hit.data.row) : null;
       if (cell) this._placeTower(this.selectedTowerType, cell);
       else { this.audio.deny(); this.hud.toast('Build on a green plot beside the road'); }
       return;
     }
 
-    // otherwise: try to select a built tower
-    this._ray(e);
-    const hits = this.raycaster.intersectObjects(this.towers.map((t) => t.obj), true);
-    if (hits.length) {
-      const tower = this.towers.find((t) => this._owns(t.obj, hits[0].object));
-      if (tower) { this._selectBuiltTower(tower); return; }
-    }
     this._deselectTower();
   }
 
@@ -437,7 +449,7 @@ export class Game {
 
   _showRange(pos, range) {
     this.rangeRing.visible = true;
-    this.rangeRing.position.set(pos.x, 0.05, pos.z);
+    this.rangeRing.position.set(pos.x, pos.y + 0.14, pos.z);
     this.rangeRing.scale.setScalar(range);
   }
 

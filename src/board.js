@@ -1,38 +1,27 @@
 // ============================================================================
-// board.js — builds the 3D hex board: ground tiles, the winding road, the
-// castle, decorations; exposes enemy waypoints and the buildable-cell map.
+// board.js — builds the 3D hex board with ELEVATION: height-banded terraces,
+// a winding road that ramps up to a castle on a raised plateau, rock "padding"
+// on slopes, a water moat, and rich decoration. Exposes enemy waypoints (with
+// height) and the buildable-cell map. Tiles are pickable for placement.
 // ============================================================================
 import * as THREE from 'three';
 import { MODELS, COLORS, LEVEL } from './config.js';
 import {
-  SQRT3, offsetToWorld, generateSerpentinePath, boardExtents, cellKey,
+  SQRT3, offsetToWorld, generateSerpentinePath, boardExtents, cellKey, offsetNeighbors,
 } from './hex.js';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+const STEP = 0.8;        // world height per elevation tier (dramatic but gap-free at ≤1 adjacency)
+const MAX_TIER = 3;      // 0..3 tiers — castle sits on a tall plateau
+const BASE_LIFT = 2.6;   // raise the whole island onto a pedestal/hill above the water
 
-/** Snap radians to nearest multiple of 60° (PI/3). */
-function snap60(radians) {
-  return Math.round(radians / (Math.PI / 3)) * (Math.PI / 3);
-}
+function snap60(r) { return Math.round(r / (Math.PI / 3)) * (Math.PI / 3); }
 
-/**
- * Build a flat-top hexagonal CylinderGeometry approximation.
- * tileSize = circumradius. Returns a Mesh, not a Group.
- */
-function makeHexMesh(tileSize, material) {
-  // CylinderGeometry(radiusTop, radiusBottom, height, radialSegments, ...)
-  // 6 segments = hexagon; openEnded=false. Height small so it sits flush.
-  const geo = new THREE.CylinderGeometry(tileSize * 0.995, tileSize * 0.995, 0.12, 6, 1, false);
+function makeHexMesh(tileSize, material, height = 0.12) {
+  const geo = new THREE.CylinderGeometry(tileSize * 0.995, tileSize * 0.995, height, 6, 1, false);
   const mesh = new THREE.Mesh(geo, material);
   mesh.receiveShadow = true;
   return mesh;
 }
-
-// ---------------------------------------------------------------------------
-// Board
-// ---------------------------------------------------------------------------
 
 export class Board {
   constructor(scene, assets) {
@@ -42,11 +31,15 @@ export class Board {
     scene.add(this.group);
 
     this.size = 1;
+    this.step = STEP;
+    this.baseY = BASE_LIFT;
     this.origin = new THREE.Vector3();
-    this.pathPoints = [];     // THREE.Vector3[] enemy waypoints (y=0)
+    this.pathPoints = [];      // THREE.Vector3[] enemy waypoints (y = terrain height)
     this.spawnPos = new THREE.Vector3();
     this.castlePos = new THREE.Vector3();
-    this.cells = new Map();   // key -> { col,row,pos,occupied,grass,deco }
+    this.cells = new Map();    // key -> { col,row,pos,height,occupied,grass,deco }
+    this.heights = new Map();  // key -> tier (0..MAX_TIER) for every grid cell
+    this.tilePickables = [];   // tile groups, for raycast placement/targeting
     this.radius = 10;
   }
 
@@ -54,389 +47,280 @@ export class Board {
     const { cols, rows, corridorRows } = LEVEL;
     const gb = this.assets.box(MODELS.tileGrass);
     this.size = (gb.max.x - gb.min.x) / SQRT3; // pointy-top circumradius
-
-    const ext = boardExtents(cols, rows, this.size);
-    this.origin.set(-ext.cx, 0, -ext.cz);
-    this.radius = Math.max(ext.maxX - ext.minX, ext.maxZ - ext.minZ) / 2 + this.size;
+    const s = this.size;
+    const ox = -boardExtents(cols, rows, s).cx;
+    const oz = -boardExtents(cols, rows, s).cz;
+    this.origin.set(ox, 0, oz);
+    const ext = boardExtents(cols, rows, s);
+    this.radius = Math.max(ext.maxX - ext.minX, ext.maxZ - ext.minZ) / 2 + s;
 
     const path = generateSerpentinePath(cols, corridorRows);
     const pathKeys = new Set(path.map((c) => cellKey(c.col, c.row)));
 
-    // ---- Grass Summer texture — load async, apply to all grass tile materials ----
-    // We collect grass material refs so the texture callback can patch them in.
-    const grassMaterials = [];
-    const texLoader = new THREE.TextureLoader();
-    texLoader.load(
-      MODELS.tileSummerTex,
-      (tex) => {
-        tex.flipY = false; // glTF UV convention
-        tex.colorSpace = THREE.SRGBColorSpace;
-        tex.anisotropy = 4;
-        for (const mat of grassMaterials) {
-          mat.map = tex;
-          mat.color.set(0xffffff); // let the texture provide colour
-          mat.needsUpdate = true;
-        }
-      },
-      undefined,
-      () => { /* texture missing — fall back to tinted material colour */ }
-    );
+    // world XZ of path ends (used as elevation anchors)
+    const wOf = (cell) => { const w = offsetToWorld(cell.col, cell.row, s); return { x: w.x + ox, z: w.z + oz }; };
+    const castleAnchor = wOf(path[path.length - 1]);
+    const spawnAnchor = wOf(path[0]);
+    const hillAnchor = (() => { const w = offsetToWorld(cols - 3, 4, s); return { x: w.x + ox, z: w.z + oz }; })();
+    const colStep = SQRT3 * s;
 
-    // ---- Lay every tile ----
+    // ---- elevation field (≤1-tier adjacency by construction → no gaps) ----
+    const tierAt = (c, r) => {
+      const w = offsetToWorld(c, r, s);
+      const wx = w.x + ox, wz = w.z + oz;
+      const dCastle = Math.hypot(wx - castleAnchor.x, wz - castleAnchor.z) / colStep;
+      const hCastle = MAX_TIER - Math.floor(dCastle / 2.0);          // castle plateau
+      const dHill = Math.hypot(wx - hillAnchor.x, wz - hillAnchor.z) / colStep;
+      const hHill = 1 - Math.floor(dHill / 1.8);                     // a green hill
+      const edge = Math.min(c, cols - 1 - c, r, rows - 1 - r);       // 0 at border (beach)
+      const base = Math.min(Math.max(hHill, 0), edge);              // terrain falls to water at edges
+      return Math.max(0, Math.min(MAX_TIER, Math.max(hCastle, base))); // castle exempt from edge cap
+    };
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) this.heights.set(cellKey(c, r), tierAt(c, r));
+
+    // ---- grass Summer texture (async; lusher green) ----
+    const grassMats = [];
+    new THREE.TextureLoader().load(MODELS.tileSummerTex, (tex) => {
+      tex.flipY = false; tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+      for (const m of grassMats) { m.map = tex; m.color.set(0xffffff); m.needsUpdate = true; }
+    });
+
+    // ---- lay every tile at its elevation ----
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const k = cellKey(c, r);
         const isPath = pathKeys.has(k);
-        const w = offsetToWorld(c, r, this.size);
+        const w = offsetToWorld(c, r, s);
+        const y = BASE_LIFT + this.heights.get(k) * STEP;
 
-        const tile = this.assets.instance(MODELS.tileGrass, {
-          groundAlign: false,
-          cloneMaterials: true, // always clone so we can tint individually
-        });
-        tile.position.set(w.x + this.origin.x, 0, w.z + this.origin.z);
-
-        // Random 60° Y-rotation for visual variety
-        tile.rotation.y = snap60(Math.floor(Math.random() * 6) * (Math.PI / 3));
+        const tile = this.assets.instance(MODELS.tileGrass, { groundAlign: false, cloneMaterials: true });
+        tile.position.set(w.x + ox, y, w.z + oz);
+        tile.rotation.y = snap60((c * 2 + r) % 6 * (Math.PI / 3));
 
         if (isPath) {
-          // Clean dirt road: fresh MeshStandardMaterial, no atlas map, warm sandy colour
           tile.traverse((o) => {
             if (o.isMesh) {
-              o.material = new THREE.MeshStandardMaterial({
-                color: 0xc8a05a,
-                roughness: 0.92,
-                metalness: 0.0,
-              });
-              o.castShadow = true;
-              o.receiveShadow = true;
+              o.material = new THREE.MeshStandardMaterial({ color: COLORS.path, roughness: 0.95, metalness: 0 });
+              o.castShadow = true; o.receiveShadow = true;
             }
           });
         } else {
-          // Collect grass materials for Summer texture application
-          tile.traverse((o) => {
-            if (o.isMesh) {
-              // Tint slightly warmer green for a lush field
-              o.material.color.set(0x8acc5a);
-              grassMaterials.push(o.material);
-            }
-          });
+          tile.traverse((o) => { if (o.isMesh) { o.material.color.set(0x86c552); grassMats.push(o.material); } });
         }
 
+        tile.userData = { isTile: true, key: k, col: c, row: r, isPath };
         this.group.add(tile);
+        this.tilePickables.push(tile);
 
         if (!isPath) {
-          this.cells.set(k, {
-            col: c, row: r,
-            pos: tile.position.clone(), // true tile centre — MUST NOT be altered
-            occupied: false,
-            grass: tile,
-            deco: false,
-          });
+          this.cells.set(k, { col: c, row: r, pos: tile.position.clone(), height: this.heights.get(k), occupied: false, grass: tile, deco: false });
         }
       }
     }
 
-    // ---- Waypoints from path cells ----
+    // ---- waypoints (with terrain height) ----
     this.pathPoints = path.map((c) => {
-      const w = offsetToWorld(c.col, c.row, this.size);
-      return new THREE.Vector3(w.x + this.origin.x, 0, w.z + this.origin.z);
+      const w = offsetToWorld(c.col, c.row, s);
+      return new THREE.Vector3(w.x + ox, BASE_LIFT + this.heights.get(cellKey(c.col, c.row)) * STEP, w.z + oz);
     });
     this.spawnPos.copy(this.pathPoints[0]);
     this.castlePos.copy(this.pathPoints[this.pathPoints.length - 1]);
 
-    // ---- Castle at the road's end ----
-    const castle = this.assets.instance(MODELS.castle, { scale: 1.15, groundAlign: true });
+    // ---- castle on its plateau ----
+    const castle = this.assets.instance(MODELS.castle, { scale: 1.2, groundAlign: true });
     castle.position.copy(this.castlePos);
     const prev = this.pathPoints[this.pathPoints.length - 2] || this.castlePos;
-    castle.lookAt(prev.x, 0, prev.z);
+    castle.lookAt(prev.x, this.castlePos.y, prev.z);
     this.group.add(castle);
     this.castle = castle;
 
-    // ---- Water moat island framing ----
     this._buildWaterRing(cols, rows);
-
-    // ---- Decorations ----
     this._decorate(cols, rows, pathKeys);
+    this._rockyAccents(cols, rows, pathKeys);
+    this._buildIslandBase();
 
-    // ---- Backdrop: deep water plane replacing the old green grass plane ----
-    const backdropSize = this.radius * 7;
+    // ---- deep-water backdrop ----
     const backdrop = new THREE.Mesh(
-      new THREE.PlaneGeometry(backdropSize, backdropSize),
-      new THREE.MeshStandardMaterial({
-        color: COLORS.waterBackdrop,
-        roughness: 0.85,
-        metalness: 0.1,
-      })
+      new THREE.PlaneGeometry(this.radius * 10, this.radius * 10),
+      new THREE.MeshStandardMaterial({ color: COLORS.waterBackdrop, roughness: 0.7, metalness: 0.15 })
     );
     backdrop.rotation.x = -Math.PI / 2;
-    backdrop.position.y = -0.55; // slightly below the water hex tiles
+    backdrop.position.y = -1.6;
     backdrop.receiveShadow = true;
     this.scene.add(backdrop);
   }
 
-  // --------------------------------------------------------------------------
-  // Water moat ring — hex tiles made from CylinderGeometry ringing the board
-  // --------------------------------------------------------------------------
-  _buildWaterRing(cols, rows) {
+  // Rock "padding" on downhill slopes + a rocky skirt under the castle + shore framing.
+  _rockyAccents(cols, rows, pathKeys) {
     const s = this.size;
+    let seed = 1337;
+    const rng = () => { seed = (seed * 1664525 + 1013904223) & 0xffffffff; return (seed >>> 0) / 0xffffffff; };
+    const rocks = MODELS.decoRocks;
+    const placeRock = (x, y, z, sc) => {
+      const o = this.assets.instance(rocks[Math.floor(rng() * rocks.length)], { scale: sc, groundAlign: true });
+      o.position.set(x, y, z);
+      o.rotation.y = rng() * Math.PI * 2;
+      this.group.add(o);
+    };
 
-    // Two water material variants for depth variation
-    const matDeep = new THREE.MeshStandardMaterial({
-      color: COLORS.waterDeep,
-      roughness: 0.6,
-      metalness: 0.25,
-    });
-    const matShallow = new THREE.MeshStandardMaterial({
-      color: COLORS.waterShallow,
-      roughness: 0.5,
-      metalness: 0.3,
-    });
-
-    // Gather all grid positions to know what's "inside"
-    const gridSet = new Set();
+    // 1) slope padding: where a cell is higher than a neighbour, drop a rock at the shared edge
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        gridSet.add(cellKey(c, r));
+        const hk = this.heights.get(cellKey(c, r));
+        const w = offsetToWorld(c, r, s);
+        const cx = w.x + this.origin.x, cz = w.z + this.origin.z;
+        for (const n of offsetNeighbors(c, r)) {
+          const nk = cellKey(n.col, n.row);
+          if (!this.heights.has(nk)) continue;
+          if (hk - this.heights.get(nk) >= 1 && rng() < 0.5) {
+            const nw = offsetToWorld(n.col, n.row, s);
+            const mx = (cx + nw.x + this.origin.x) / 2;
+            const mz = (cz + nw.z + this.origin.z) / 2;
+            placeRock(mx, BASE_LIFT + (hk * STEP + this.heights.get(nk) * STEP) / 2 - 0.1, mz, 0.5 + rng() * 0.4);
+          }
+        }
       }
     }
 
-    // Place water hex tiles in a ring 1 and 2 cells outside the grid extent.
-    // We iterate over an expanded bounding box in offset coordinates.
-    const ringCells = new Set();
+    // 2) rocky skirt around the castle plateau (the "rocky peak")
+    const cp = this.castlePos;
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2 + rng() * 0.3;
+      const d = s * (1.0 + rng() * 0.5);
+      placeRock(cp.x + Math.cos(a) * d, cp.y - 0.15, cp.z + Math.sin(a) * d, 0.6 + rng() * 0.6);
+    }
 
-    const minC = -3, maxC = cols + 2;
-    const minR = -3, maxR = rows + 2;
+    // 3) rocky shore: ring of larger rocks just outside the board border (grey cliffs)
+    for (let i = 0; i < 26; i++) {
+      const a = (i / 26) * Math.PI * 2;
+      const d = this.radius * (1.02 + rng() * 0.18);
+      placeRock(Math.cos(a) * d, BASE_LIFT - 0.8, Math.sin(a) * d, 0.9 + rng() * 1.1);
+    }
+  }
 
-    for (let r = minR; r <= maxR; r++) {
-      for (let c = minC; c <= maxC; c++) {
-        if (gridSet.has(cellKey(c, r))) continue; // skip inner board tiles
+  // Solid earth + rock pedestal beneath the island (the "on a hill" look).
+  _buildIslandBase() {
+    const R = this.radius;
+    const top = BASE_LIFT - 0.05;
+    const soil = new THREE.Mesh(
+      new THREE.CylinderGeometry(R * 1.04, R * 0.94, 1.2, 11, 1),
+      new THREE.MeshStandardMaterial({ color: 0x7a5230, roughness: 1, flatShading: true })
+    );
+    soil.position.y = top - 0.6;
+    soil.receiveShadow = true; soil.castShadow = true;
+    this.group.add(soil);
+
+    const rockTop = top - 1.2, rockBottom = -0.6;
+    const rock = new THREE.Mesh(
+      new THREE.CylinderGeometry(R * 0.94, R * 0.6, rockTop - rockBottom, 9, 1),
+      new THREE.MeshStandardMaterial({ color: 0x8a8377, roughness: 1, flatShading: true })
+    );
+    rock.position.y = (rockTop + rockBottom) / 2;
+    rock.receiveShadow = true; rock.castShadow = true;
+    this.group.add(rock);
+  }
+
+  _buildWaterRing(cols, rows) {
+    const s = this.size;
+    const matDeep = new THREE.MeshStandardMaterial({ color: COLORS.waterDeep, roughness: 0.4, metalness: 0.35 });
+    const matShallow = new THREE.MeshStandardMaterial({ color: COLORS.waterShallow, roughness: 0.35, metalness: 0.4 });
+    const grid = new Set();
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) grid.add(cellKey(c, r));
+
+    for (let r = -3; r <= rows + 2; r++) {
+      for (let c = -3; c <= cols + 2; c++) {
+        if (grid.has(cellKey(c, r))) continue;
         const w = offsetToWorld(c, r, s);
-        const wx = w.x + this.origin.x;
-        const wz = w.z + this.origin.z;
-
-        // Only place water cells within a reasonable distance of the board
-        const distFromCenter = Math.max(Math.abs(wx), Math.abs(wz));
-        if (distFromCenter > this.radius * 1.8) continue;
-
-        const rKey = cellKey(c, r);
-        if (ringCells.has(rKey)) continue;
-        ringCells.add(rKey);
-
-        // Vary mat by distance: closer = shallow, farther = deep
-        const distNorm = distFromCenter / (this.radius * 1.5);
-        const mat = distNorm > 0.55 ? matDeep : matShallow;
-        const mesh = makeHexMesh(s, mat);
-        // Water tiles sit slightly below board tiles
-        mesh.position.set(wx, -0.32, wz);
-        // Random 60° rotation for variety
-        mesh.rotation.y = (Math.floor(Math.random() * 6)) * (Math.PI / 3);
+        const wx = w.x + this.origin.x, wz = w.z + this.origin.z;
+        const dist = Math.max(Math.abs(wx), Math.abs(wz));
+        if (dist > this.radius * 1.85) continue;
+        const mat = dist / (this.radius * 1.5) > 0.55 ? matDeep : matShallow;
+        const mesh = makeHexMesh(s, mat, 0.4);
+        mesh.position.set(wx, -0.42, wz);
+        mesh.rotation.y = Math.floor(Math.random() * 6) * (Math.PI / 3);
         this.group.add(mesh);
       }
     }
   }
 
-  // --------------------------------------------------------------------------
-  // Rich decoration system
-  // --------------------------------------------------------------------------
   _decorate(cols, rows, pathKeys) {
-    // Seeded-ish random via simple counter to get consistent results
     let seed = 42;
     const rng = () => { seed = (seed * 1664525 + 1013904223) & 0xffffffff; return (seed >>> 0) / 0xffffffff; };
+    const nature = MODELS.decoNature, rocks = MODELS.decoRocks;
+    const castleProps = MODELS.decoCastleProps, spawnProps = MODELS.decoSpawnProps, waterPlants = MODELS.decoWaterPlants;
+    const pick = (arr) => arr[Math.floor(rng() * arr.length)]; // picks once (avoids double-eval bugs)
 
-    const nature = MODELS.decoNature;
-    const rocks = MODELS.decoRocks;
-    const castleProps = MODELS.decoCastleProps;
-    const spawnProps = MODELS.decoSpawnProps;
-    const waterPlants = MODELS.decoWaterPlants;
-
-    // Helper: place a model on a cell (marks cell occupied+deco)
     const placeOnCell = (col, row, model, opts = {}) => {
       const k = cellKey(col, row);
       if (pathKeys.has(k)) return false;
       const cell = this.cells.get(k);
       if (!cell || cell.occupied) return false;
-      const scaleMin = opts.scaleMin ?? 0.85;
-      const scaleMax = opts.scaleMax ?? 1.25;
-      const obj = this.assets.instance(model, {
-        scale: scaleMin + rng() * (scaleMax - scaleMin),
-        groundAlign: true,
-      });
+      const obj = this.assets.instance(model, { scale: (opts.scaleMin ?? 0.85) + rng() * ((opts.scaleMax ?? 1.25) - (opts.scaleMin ?? 0.85)), groundAlign: true });
       obj.position.copy(cell.pos);
-      // Offset slightly inside the hex for visual naturalness
-      if (opts.jitter) {
-        obj.position.x += (rng() - 0.5) * this.size * 0.35;
-        obj.position.z += (rng() - 0.5) * this.size * 0.35;
-      }
-      obj.rotation.y = snap60(rng() * Math.PI * 2);
+      if (opts.jitter) { obj.position.x += (rng() - 0.5) * this.size * 0.3; obj.position.z += (rng() - 0.5) * this.size * 0.3; }
+      obj.rotation.y = rng() * Math.PI * 2;
       this.group.add(obj);
-      cell.occupied = true;
-      cell.deco = true;
+      cell.occupied = true; cell.deco = true;
       return true;
     };
-
-    // Helper: place decoration in world space (not on a cell)
     const placeWorld = (wx, wz, model, opts = {}) => {
-      const scaleMin = opts.scaleMin ?? 0.8;
-      const scaleMax = opts.scaleMax ?? 1.3;
-      const obj = this.assets.instance(model, {
-        scale: scaleMin + rng() * (scaleMax - scaleMin),
-        groundAlign: true,
-      });
+      const obj = this.assets.instance(model, { scale: (opts.scaleMin ?? 0.8) + rng() * ((opts.scaleMax ?? 1.3) - (opts.scaleMin ?? 0.8)), groundAlign: true });
       obj.position.set(wx, opts.y ?? 0, wz);
       obj.rotation.y = rng() * Math.PI * 2;
       this.group.add(obj);
     };
 
-    // ---- 1. Lush tree border: every border cell gets a tree or rock ----
-    // Border = row 0, row rows-1, col 0, col cols-1
-    const borderCols = [0, cols - 1];
-    const borderRows = [0, rows - 1];
-
-    // Top and bottom rows — dense tree clusters
-    for (let c = 0; c < cols; c++) {
-      for (const r of borderRows) {
-        const k = cellKey(c, r);
-        if (pathKeys.has(k)) continue;
-        if (!this.cells.has(k)) continue;
-        // Alternate trees and rocks for variety
-        const model = (c + r) % 4 === 0
-          ? rocks[Math.floor(rng() * rocks.length)]
-          : nature[Math.floor(rng() * nature.length)];
-        placeOnCell(c, r, model, { scaleMin: 0.8, scaleMax: 1.2 });
-      }
+    // lush border ring
+    for (let c = 0; c < cols; c++) for (const r of [0, rows - 1]) {
+      const k = cellKey(c, r);
+      if (pathKeys.has(k) || !this.cells.has(k)) continue;
+      placeOnCell(c, r, pick((c + r) % 4 === 0 ? rocks : nature), { scaleMin: 0.85, scaleMax: 1.25 });
+    }
+    for (let r = 1; r < rows - 1; r++) for (const c of [0, cols - 1]) {
+      const k = cellKey(c, r);
+      if (pathKeys.has(k) || !this.cells.has(k)) continue;
+      placeOnCell(c, r, pick(r % 3 === 0 ? rocks : nature), { scaleMin: 0.8, scaleMax: 1.2 });
+    }
+    // sparse interior so most plots stay free
+    for (let r = 1; r < rows - 1; r++) for (let c = 1; c < cols - 1; c++) {
+      const k = cellKey(c, r);
+      if (pathKeys.has(k)) continue;
+      const cell = this.cells.get(k);
+      if (!cell || cell.occupied || rng() > 0.12) continue;
+      placeOnCell(c, r, pick(rng() < 0.35 ? rocks : nature), { scaleMin: 0.7, scaleMax: 1.0, jitter: true });
     }
 
-    // Left and right columns
-    for (let r = 1; r < rows - 1; r++) {
-      for (const c of borderCols) {
-        const k = cellKey(c, r);
-        if (pathKeys.has(k)) continue;
-        if (!this.cells.has(k)) continue;
-        const model = r % 3 === 0
-          ? rocks[Math.floor(rng() * rocks.length)]
-          : nature[Math.floor(rng() * nature.length)];
-        placeOnCell(c, r, model, { scaleMin: 0.75, scaleMax: 1.15 });
-      }
+    // castle + spawn themed props
+    const cellCR = (pos) => ({ col: Math.round((pos.x - this.origin.x) / (SQRT3 * this.size)), row: Math.round((pos.z - this.origin.z) / (1.5 * this.size)) });
+    const cc = cellCR(this.castlePos);
+    let pc = 0;
+    for (const [nc, nr] of [[cc.col-1,cc.row],[cc.col+1,cc.row],[cc.col,cc.row-1],[cc.col-1,cc.row-1],[cc.col+1,cc.row-1],[cc.col-2,cc.row]]) {
+      if (pc >= 4) break;
+      const model = pc < 2 ? castleProps[pc % castleProps.length] : castleProps[2 + ((pc - 2) % (castleProps.length - 2))];
+      if (placeOnCell(nc, nr, model, { scaleMin: 0.9, scaleMax: 1.1 })) pc++;
+    }
+    const sc = cellCR(this.spawnPos);
+    let sp = 0;
+    for (const [nc, nr] of [[sc.col-1,sc.row],[sc.col+1,sc.row],[sc.col,sc.row+1],[sc.col-1,sc.row+1],[sc.col+1,sc.row+1]]) {
+      if (sp >= 4) break;
+      const model = sp < 1 ? rocks[Math.floor(rng()*rocks.length)] : spawnProps[(sp - 1) % spawnProps.length];
+      if (placeOnCell(nc, nr, model, { scaleMin: 0.9, scaleMax: 1.2 })) sp++;
     }
 
-    // ---- 2. Interior scattered decoration (sparse — keep most cells free) ----
-    // Only decorate a fraction of inner cells far from the path
-    for (let r = 1; r < rows - 1; r++) {
-      for (let c = 1; c < cols - 1; c++) {
-        const k = cellKey(c, r);
-        if (pathKeys.has(k)) continue;
-        const cell = this.cells.get(k);
-        if (!cell || cell.occupied) continue;
-        // Very sparse: ~12% chance per inner cell
-        if (rng() > 0.12) continue;
-        const model = rng() < 0.35
-          ? rocks[Math.floor(rng() * rocks.length)]
-          : nature[Math.floor(rng() * nature.length)];
-        placeOnCell(c, r, model, { scaleMin: 0.7, scaleMax: 1.0, jitter: true });
-      }
-    }
-
-    // ---- 3. Castle end cluster — intentional, themed props + flags ----
-    // Castle is at pathPoints[last], typically near row corridorRows[last]
-    const castleCol = Math.round((this.castlePos.x - this.origin.x) / (SQRT3 * this.size));
-    const castleRow = Math.round((this.castlePos.z - this.origin.z) / (1.5 * this.size));
-
-    // Place flags and props in the cells adjacent to castle (non-path cells nearby)
-    const castleNeighbors = [
-      [castleCol - 1, castleRow],
-      [castleCol + 1, castleRow],
-      [castleCol, castleRow - 1],
-      [castleCol, castleRow + 1],
-      [castleCol - 2, castleRow],
-      [castleCol + 2, castleRow],
-      [castleCol - 1, castleRow - 1],
-      [castleCol + 1, castleRow - 1],
-    ];
-    let propCount = 0;
-    for (const [nc, nr] of castleNeighbors) {
-      if (propCount >= 4) break;
-      const model = propCount < 2
-        ? castleProps[propCount % castleProps.length]  // flags first
-        : castleProps[2 + ((propCount - 2) % (castleProps.length - 2))]; // barrels/crates
-      if (placeOnCell(nc, nr, model, { scaleMin: 0.9, scaleMax: 1.1 })) propCount++;
-    }
-
-    // ---- 4. Spawn end cluster — rocky archway feel + camp props ----
-    const spawnCol = Math.round((this.spawnPos.x - this.origin.x) / (SQRT3 * this.size));
-    const spawnRow = Math.round((this.spawnPos.z - this.origin.z) / (1.5 * this.size));
-
-    const spawnNeighbors = [
-      [spawnCol - 1, spawnRow],
-      [spawnCol + 1, spawnRow],
-      [spawnCol, spawnRow + 1],
-      [spawnCol - 1, spawnRow + 1],
-      [spawnCol + 1, spawnRow + 1],
-      [spawnCol - 2, spawnRow],
-      [spawnCol + 2, spawnRow],
-    ];
-    let spawnPropCount = 0;
-    for (const [nc, nr] of spawnNeighbors) {
-      if (spawnPropCount >= 5) break;
-      const isRock = spawnPropCount < 2;
-      const model = isRock
-        ? rocks[spawnPropCount % rocks.length]
-        : spawnProps[(spawnPropCount - 2) % spawnProps.length];
-      if (placeOnCell(nc, nr, model, { scaleMin: 0.9, scaleMax: 1.2 })) spawnPropCount++;
-    }
-
-    // ---- 5. Water-edge decorations: place nature in world space around the moat ----
-    // Ring of nature pieces just outside the grid boundary
-    const s = this.size;
-    const ext = boardExtents(LEVEL.cols, LEVEL.rows, s);
-    const margin = s * 2.2;
-
-    // Place decorations outside the grid, in 4 "corners" and along edges
-    const outerPositions = [
-      // corners
-      { x: ext.minX + this.origin.x - margin, z: ext.minZ + this.origin.z - margin },
-      { x: ext.maxX + this.origin.x + margin, z: ext.minZ + this.origin.z - margin },
-      { x: ext.minX + this.origin.x - margin, z: ext.maxZ + this.origin.z + margin },
-      { x: ext.maxX + this.origin.x + margin, z: ext.maxZ + this.origin.z + margin },
-      // along top edge
-      { x: this.origin.x - ext.cx * 0.3, z: ext.minZ + this.origin.z - margin * 1.5 },
-      { x: this.origin.x + ext.cx * 0.3, z: ext.minZ + this.origin.z - margin * 1.5 },
-      // along bottom edge
-      { x: this.origin.x - ext.cx * 0.3, z: ext.maxZ + this.origin.z + margin * 1.5 },
-      { x: this.origin.x + ext.cx * 0.3, z: ext.maxZ + this.origin.z + margin * 1.5 },
-      // along left edge
-      { x: ext.minX + this.origin.x - margin * 1.8, z: this.origin.z },
-      // along right edge
-      { x: ext.maxX + this.origin.x + margin * 1.8, z: this.origin.z },
-    ];
-
-    for (const { x, z } of outerPositions) {
-      // Place 1-3 decorations near each outer position
-      const count = 1 + Math.floor(rng() * 3);
-      for (let i = 0; i < count; i++) {
-        const offsetX = (rng() - 0.5) * s * 2;
-        const offsetZ = (rng() - 0.5) * s * 2;
-        const model = rng() < 0.4
-          ? rocks[Math.floor(rng() * rocks.length)]
-          : nature[Math.floor(rng() * nature.length)];
-        placeWorld(x + offsetX, z + offsetZ, model, { scaleMin: 0.7, scaleMax: 1.2, y: -0.3 });
-      }
-    }
-
-    // Water plants scattered in moat ring (near board edges but off-tile)
-    for (let i = 0; i < 10; i++) {
-      const angle = (i / 10) * Math.PI * 2 + rng() * 0.4;
-      const dist = this.radius * (0.85 + rng() * 0.3);
-      const wx = Math.cos(angle) * dist;
-      const wz = Math.sin(angle) * dist;
-      const model = waterPlants[Math.floor(rng() * waterPlants.length)];
-      placeWorld(wx, wz, model, { scaleMin: 0.6, scaleMax: 1.0, y: -0.28 });
+    // water plants fringing the moat
+    for (let i = 0; i < 14; i++) {
+      const a = (i / 14) * Math.PI * 2 + rng() * 0.4;
+      const d = this.radius * (0.82 + rng() * 0.28);
+      placeWorld(Math.cos(a) * d, Math.sin(a) * d, waterPlants[Math.floor(rng() * waterPlants.length)], { scaleMin: 0.6, scaleMax: 1.0, y: -0.34 });
     }
   }
 
-  // Nearest cell for a world point (inverse offset). Returns {col,row} (may be out of range).
+  // ---- picking / lookups ----
+  // Climb to the owning tile group and return its userData (or null).
+  tileData(obj) { let o = obj; while (o) { if (o.userData && o.userData.isTile) return o.userData; o = o.parent; } return null; }
+
   worldToCell(x, z) {
-    const lx = x - this.origin.x;
-    const lz = z - this.origin.z;
+    const lx = x - this.origin.x, lz = z - this.origin.z;
     const row = Math.round(lz / (1.5 * this.size));
     const col = Math.round(lx / (SQRT3 * this.size) - 0.5 * (row & 1));
     return { col, row };
