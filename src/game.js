@@ -11,6 +11,9 @@ import { createFoliage } from './foliage.js';
 import { createAtmosphere } from './atmosphere.js';
 import { createWildlife } from './wildlife.js';
 import { createAnimProps } from './animprops.js';
+import { createVillagers } from './villagers.js';
+import { createCritters } from './critters.js';
+import { createTownLife } from './townlife.js';
 
 import { Assets } from './assets.js';
 import { Board } from './board.js';
@@ -190,6 +193,9 @@ export class Game {
       ...TOWER_ORDER.map((id) => TOWERS[id].model),
       ...Object.values(ENEMIES).map((e) => e.model),
       ...Object.values(PROJECTILES),
+      // villager / townsfolk models (used by src/villagers.js)
+      'units/blue/unit_blue_full.gltf', 'units/green/unit_green_full.gltf', 'units/yellow/unit_yellow_full.gltf',
+      'units/neutral/cart_merchant.gltf', 'units/neutral/horse_A.gltf',
     ];
     await this.assets.loadAll(manifest, (done, total) => {
       this.hud.loading(done / total, `Loading assets… ${done}/${total}`);
@@ -207,6 +213,9 @@ export class Game {
       createAtmosphere(this.scene, this.board),
       createWildlife(this.scene, this.board),
       createAnimProps(this.scene, this.board),
+      createVillagers(this.scene, this.board),
+      createCritters(this.scene, this.board),
+      createTownLife(this.scene, this.board),
     ];
 
     this.hud.hideLoading();

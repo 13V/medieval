@@ -35,6 +35,9 @@ export class Enemy {
     this.reached = false;
 
     this.obj = game.assets.instance(def.model, { scale: def.scale, groundAlign: true, cloneMaterials: true });
+    this.model = this.obj.children[0] || this.obj; // inner mesh — for procedural walk animation
+    this.modelBaseY = this.model.position.y;
+    this.walk = Math.random() * Math.PI * 2;
     this.mats = collectMaterials(this.obj);
     this.baseColors = this.mats.map((m) => m.color.clone());
 
@@ -191,6 +194,13 @@ export class Enemy {
       pos.add(this._tmp);
       this.obj.rotation.y = Math.atan2(this._tmp.x, this._tmp.z);
     }
+
+    // lively march animation (visual only — does not affect path position)
+    this.walk += dt * (2.2 + this.baseSpeed * 1.8);
+    const amp = this.isBoss ? 0.16 : this.type === 'raider' ? 0.2 : 0.12;
+    this.model.position.y = this.modelBaseY + Math.abs(Math.sin(this.walk)) * amp;
+    this.model.rotation.z = Math.sin(this.walk) * 0.07;
+    this.model.rotation.x = 0.05 + Math.sin(this.walk * 2) * 0.03;
 
     // visuals: slow tint + hit flash
     for (let i = 0; i < this.mats.length; i++) {
