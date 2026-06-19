@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Medieval Siege — Hex Tower Defense</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <!-- ===================== HUD overlay ===================== -->
+    <div id="hud" aria-hidden="false">
+      <!-- Top bar -->
+      <div class="top-left panel">
+        <div class="wave-label">WAVE <span id="wave-num">0</span><span class="muted">/<span id="wave-total">20</span></span></div>
+        <div class="wave-bar"><div id="wave-bar-fill"></div></div>
+        <div id="wave-state" class="muted">Press START</div>
+      </div>
+
+      <div class="top-center">
+        <div class="castle-hp panel">
+          <span class="hp-icon">🏰</span>
+          <div class="hp-bar"><div id="hp-fill"></div><span id="hp-text">20 / 20</span></div>
+        </div>
+      </div>
+
+      <div class="top-right panel gold">
+        <span class="coin">⬤</span><span id="gold">0</span>
+      </div>
+
+      <!-- Bottom: abilities (left), build bar (center), speed (right) -->
+      <div class="ability-bar" id="ability-bar"></div>
+
+      <div class="bottom-center">
+        <div id="tower-panel" class="tower-panel hidden"></div>
+        <div class="build-bar" id="build-bar"></div>
+      </div>
+
+      <div class="speed-bar">
+        <button class="btn primary" id="btn-start">▶ START WAVE</button>
+        <div class="speed-group">
+          <button class="btn speed" id="btn-pause" title="Pause">❚❚</button>
+          <button class="btn speed active" id="btn-1x" title="Normal speed">1×</button>
+          <button class="btn speed" id="btn-2x" title="Fast forward">2×</button>
+        </div>
+        <button class="btn icon" id="btn-mute" title="Mute">🔊</button>
+      </div>
+
+      <div id="toast" class="toast"></div>
+      <div id="hint" class="hint"></div>
+    </div>
+
+    <!-- ===================== Screens ===================== -->
+    <div id="loading" class="screen">
+      <div class="loading-box">
+        <h1 class="title">MEDIEVAL SIEGE</h1>
+        <div class="bar"><div id="load-fill"></div></div>
+        <div id="load-text" class="muted">Loading assets…</div>
+      </div>
+    </div>
+
+    <div id="start-screen" class="screen hidden">
+      <div class="dialog">
+        <h1 class="title">MEDIEVAL SIEGE</h1>
+        <p class="subtitle">Hold the road. Build towers. Freeze the horde.</p>
+        <p class="blurb">
+          Rebel waves march along the road toward your castle. Build <b>Archer</b>, <b>Cannon</b>
+          and <b>Catapult</b> towers to destroy them, and <b>Frost</b> towers to slow them to a crawl.
+          Survive all 20 waves — beware the boss at wave 10 and 20.
+        </p>
+        <button class="btn primary big" id="btn-play">⚔ PLAY</button>
+        <button class="btn ghost" id="btn-how">How to play</button>
+        <div id="how" class="how hidden">
+          <ul>
+            <li><b>Place a tower:</b> tap a tower in the bottom bar, then tap a green plot.</li>
+            <li><b>Upgrade / sell:</b> tap a tower you've built.</li>
+            <li><b>Abilities:</b> Arrow Storm &amp; Frost Nova (bottom-left) — tap, then tap the battlefield.</li>
+            <li><b>Camera:</b> drag to rotate, right-drag to pan, scroll to zoom.</li>
+            <li><b>Call early:</b> start the next wave during prep for bonus gold.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div id="end-screen" class="screen hidden">
+      <div class="dialog">
+        <h1 id="end-title" class="title">VICTORY</h1>
+        <div id="stars" class="stars">★★★</div>
+        <div id="end-stats" class="end-stats"></div>
+        <button class="btn primary big" id="btn-restart">↻ PLAY AGAIN</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
