@@ -3,6 +3,8 @@
 // ============================================================================
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { createPostFX } from './postfx.js';
 
 import { Assets } from './assets.js';
 import { Board } from './board.js';
@@ -27,6 +29,8 @@ export class Game {
     this._setupRenderer();
     this._setupScene();
     this._setupInput();
+
+    this.postfx = createPostFX(this.renderer, this.scene, this.camera);
 
     this.hud = new Hud(this);
     this.effects = new Effects(this.scene, this.camera, this.renderer);
@@ -66,13 +70,17 @@ export class Game {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.1;
     this.container.appendChild(this.renderer.domElement);
   }
 
   _setupScene() {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x8fb7d6);
-    this.scene.fog = new THREE.Fog(0x8fb7d6, 40, 95);
+    // Sky dome handles background — no flat color needed.
+    // Fog color: light sky-blue matching the horizon; near/far tuned so board
+    // edges fade into haze rather than darkness.
+    this.scene.fog = new THREE.Fog(0xcfe6f5, 55, 140);
 
     this.camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 400);
     this.camera.position.set(0, 16, 18);
@@ -84,21 +92,53 @@ export class Game {
     this.controls.minDistance = 8;
     this.controls.maxDistance = 60;
 
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x4a6b3a, 0.9);
+    // ---- Sky dome --------------------------------------------------------
+    const sky = new Sky();
+    sky.scale.setScalar(450);
+    this.scene.add(sky);
+
+    // Sun direction derived from elevation + azimuth so it matches the light.
+    // elevation 28°, azimuth 135° (south-east)
+    const sunElevationDeg = 28;
+    const sunAzimuthDeg  = 135;
+    const phi   = THREE.MathUtils.degToRad(90 - sunElevationDeg);
+    const theta = THREE.MathUtils.degToRad(sunAzimuthDeg);
+    const sunDir = new THREE.Vector3();
+    sunDir.setFromSphericalCoords(1, phi, theta);
+
+    const skyUniforms = sky.material.uniforms;
+    skyUniforms['turbidity'].value        = 6;
+    skyUniforms['rayleigh'].value         = 2.2;
+    skyUniforms['mieCoefficient'].value   = 0.005;
+    skyUniforms['mieDirectionalG'].value  = 0.8;
+    skyUniforms['sunPosition'].value.copy(sunDir);
+
+    // ---- Lights ----------------------------------------------------------
+    // Hemisphere: warm sky / earthy ground
+    const hemi = new THREE.HemisphereLight(0xbfe3ff, 0x5d7a3a, 0.7);
     this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xfff3d6, 1.6);
-    sun.position.set(18, 30, 12);
+
+    // Directional sun: warm, crisp shadows, position aligned with sky sun
+    const sun = new THREE.DirectionalLight(0xfff2d4, 2.2);
+    sun.position.copy(sunDir).multiplyScalar(50);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     const d = 26;
-    sun.shadow.camera.left = -d; sun.shadow.camera.right = d;
-    sun.shadow.camera.top = d; sun.shadow.camera.bottom = -d;
-    sun.shadow.camera.near = 1; sun.shadow.camera.far = 90;
+    sun.shadow.camera.left   = -d; sun.shadow.camera.right  = d;
+    sun.shadow.camera.top    =  d; sun.shadow.camera.bottom = -d;
+    sun.shadow.camera.near   = 1;  sun.shadow.camera.far    = 90;
     sun.shadow.bias = -0.0004;
     this.scene.add(sun);
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.25));
 
-    // placement / range indicator
+    // Soft ambient — kept very low so hemisphere + sun do the heavy lifting
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.12));
+
+    // Cool fill light from the opposite side for form/depth — no shadows
+    const fill = new THREE.DirectionalLight(0x9bb8d8, 0.35);
+    fill.position.set(-sunDir.x, sunDir.y * 0.5, -sunDir.z).multiplyScalar(40);
+    this.scene.add(fill);
+
+    // ---- Placement / range indicators ------------------------------------
     const ringGeo = new THREE.RingGeometry(0.94, 1.0, 56);
     this.rangeRing = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: COLORS.range, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }));
     this.rangeRing.rotation.x = -Math.PI / 2;
@@ -489,12 +529,13 @@ export class Game {
       this.shakeAmt *= 0.86;
     }
 
-    this.renderer.render(this.scene, this.camera);
+    this.postfx.composer.render();
   }
 
   _onResize() {
     this.camera.aspect = innerWidth / innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(innerWidth, innerHeight);
+    this.postfx.setSize(innerWidth, innerHeight);
   }
 }

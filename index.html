@@ -9,6 +9,17 @@
   <body>
     <div id="app"></div>
 
+    <!-- Full-screen vignette — above canvas, below HUD -->
+    <div id="vignette" aria-hidden="true"></div>
+
+    <!-- Wave banner — injected/animated by hud.js -->
+    <div id="wave-banner" aria-live="assertive" aria-atomic="true">
+      <div id="wave-banner-inner">
+        <span class="wbnum" id="wb-num">WAVE 1</span>
+        <span class="wbsub" id="wb-sub">Defend the castle!</span>
+      </div>
+    </div>
+
     <!-- ===================== HUD overlay ===================== -->
     <div id="hud" aria-hidden="false">
       <!-- Top bar -->
@@ -19,14 +30,14 @@
       </div>
 
       <div class="top-center">
-        <div class="castle-hp panel">
-          <span class="hp-icon">🏰</span>
+        <div class="castle-hp panel" id="castle-hp-panel">
+          <span class="hp-icon">❤️</span>
           <div class="hp-bar"><div id="hp-fill"></div><span id="hp-text">20 / 20</span></div>
         </div>
       </div>
 
       <div class="top-right panel gold">
-        <span class="coin">⬤</span><span id="gold">0</span>
+        <span class="coin"></span><span id="gold">0</span>
       </div>
 
       <!-- Bottom: abilities (left), build bar (center), speed (right) -->
@@ -38,11 +49,11 @@
       </div>
 
       <div class="speed-bar">
-        <button class="btn primary" id="btn-start">▶ START WAVE</button>
+        <button class="btn primary" id="btn-start">&#9654; START WAVE</button>
         <div class="speed-group">
-          <button class="btn speed" id="btn-pause" title="Pause">❚❚</button>
-          <button class="btn speed active" id="btn-1x" title="Normal speed">1×</button>
-          <button class="btn speed" id="btn-2x" title="Fast forward">2×</button>
+          <button class="btn speed" id="btn-pause" title="Pause">&#10074;&#10074;</button>
+          <button class="btn speed active" id="btn-1x" title="Normal speed">1&times;</button>
+          <button class="btn speed" id="btn-2x" title="Fast forward">2&times;</button>
         </div>
         <button class="btn icon" id="btn-mute" title="Mute">🔊</button>
       </div>
@@ -54,6 +65,7 @@
     <!-- ===================== Screens ===================== -->
     <div id="loading" class="screen">
       <div class="loading-box">
+        <span class="crest">⚔️</span>
         <h1 class="title">MEDIEVAL SIEGE</h1>
         <div class="bar"><div id="load-fill"></div></div>
         <div id="load-text" class="muted">Loading assets…</div>
@@ -62,6 +74,7 @@
 
     <div id="start-screen" class="screen hidden">
       <div class="dialog">
+        <span class="crest">🏰</span>
         <h1 class="title">MEDIEVAL SIEGE</h1>
         <p class="subtitle">Hold the road. Build towers. Freeze the horde.</p>
         <p class="blurb">
@@ -69,7 +82,7 @@
           and <b>Catapult</b> towers to destroy them, and <b>Frost</b> towers to slow them to a crawl.
           Survive all 20 waves — beware the boss at wave 10 and 20.
         </p>
-        <button class="btn primary big" id="btn-play">⚔ PLAY</button>
+        <button class="btn primary big" id="btn-play">&#9876; PLAY</button>
         <button class="btn ghost" id="btn-how">How to play</button>
         <div id="how" class="how hidden">
           <ul>
@@ -85,10 +98,11 @@
 
     <div id="end-screen" class="screen hidden">
       <div class="dialog">
+        <span class="crest" id="end-crest">🏆</span>
         <h1 id="end-title" class="title">VICTORY</h1>
         <div id="stars" class="stars">★★★</div>
         <div id="end-stats" class="end-stats"></div>
-        <button class="btn primary big" id="btn-restart">↻ PLAY AGAIN</button>
+        <button class="btn primary big" id="btn-restart">&#8635; PLAY AGAIN</button>
       </div>
     </div>
 

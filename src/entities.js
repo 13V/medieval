@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { ENEMIES, TOWERS, SLOW, ECONOMY } from './config.js';
 import { collectMaterials } from './assets.js';
+import { Trail, BossAura, FrostShimmer } from './effects.js';
 
 const FROST = new THREE.Color(0x8fe0ff);
 const WHITE = new THREE.Color(0xffffff);
@@ -48,6 +49,17 @@ export class Enemy {
 
     this._tmp = new THREE.Vector3();
     this._buildHealthBar();
+
+    // --- VFX additions ---
+    // Boss aura
+    this._bossAura = null;
+    if (this.isBoss) {
+      this._bossAura = new BossAura(game.scene);
+    }
+
+    // Frost shimmer (created lazily when first slowed; alive = false until then)
+    this._frostShimmer = null;
+    this._wasSlowed = false;
   }
 
   _buildHealthBar() {
@@ -90,6 +102,8 @@ export class Enemy {
     this.hp -= dmg;
     this.flash = 1;
     if (dmg >= 1) this.game.effects.number(this.obj.position, String(Math.round(dmg)));
+    // Small spark burst at the hit point
+    this.game.effects.hitSparks(this.obj.position, 0xffee88);
     this._updateHealthBar();
     if (this.hp <= 0) this._die();
   }
@@ -97,7 +111,41 @@ export class Enemy {
   _die() {
     if (!this.alive) return;
     this.alive = false;
-    this.game.effects.pop(this.obj.position, { color: 0xff7a4a, size: this.radius * 1.6 });
+
+    // Build a visual clone for the fade-out effect.
+    // Clone the obj Group — but only clone materials (not shared geometry).
+    // We do NOT call _remove() immediately; instead we hand the clone to Effects.
+    let cloneObj = null;
+    let clonedMats = [];
+    try {
+      cloneObj = this.obj.clone(true);
+      // Collect and individually clone materials on the clone so we own them
+      cloneObj.traverse((o) => {
+        if (o.isMesh && o.material) {
+          const cm = o.material.clone();
+          o.material = cm;
+          clonedMats.push(cm);
+        }
+      });
+      // Position the clone identically to current obj
+      cloneObj.position.copy(this.obj.position);
+      cloneObj.rotation.copy(this.obj.rotation);
+      cloneObj.scale.copy(this.obj.scale);
+    } catch (_e) {
+      // If clone fails for any reason, graceful degradation
+      cloneObj = null;
+      clonedMats = [];
+    }
+
+    // Death particle poof + optional boss big explosion
+    this.game.effects.deathPoof(this.obj.position, {
+      color: this.isBoss ? 0xff2200 : 0xff7a4a,
+      radius: this.radius,
+      isBoss: this.isBoss,
+      cloneObj,
+      clonedMats,
+    });
+
     this.game.onEnemyKilled(this);
     this._remove();
   }
@@ -115,6 +163,10 @@ export class Enemy {
     for (const m of this.mats) m.dispose();
     this.hbBg.material.dispose();
     this.hbFill.material.dispose();
+
+    // Dispose VFX helpers
+    if (this._bossAura) { this._bossAura.dispose(); this._bossAura = null; }
+    if (this._frostShimmer) { this._frostShimmer.dispose(); this._frostShimmer = null; }
   }
 
   update(dt) {
@@ -153,6 +205,23 @@ export class Enemy {
       }
     }
     if (this.flash > 0) this.flash = Math.max(0, this.flash - dt * 4);
+
+    // Boss aura follows the enemy
+    if (this._bossAura) {
+      this._bossAura.update(dt);
+      this._bossAura.setPosition(pos);
+    }
+
+    // Frost shimmer while slowed
+    const isSlowed = slowK > 0.05;
+    if (isSlowed && !this._frostShimmer) {
+      // Lazily create shimmer on first slow
+      this._frostShimmer = new FrostShimmer(this.game.scene);
+    }
+    if (this._frostShimmer) {
+      this._frostShimmer.update(dt, pos, isSlowed);
+    }
+    this._wasSlowed = isSlowed;
   }
 }
 
@@ -180,6 +249,11 @@ export class Tower {
 
     this.cooldown = 0;
     this._face = new THREE.Vector3();
+
+    // Recoil state
+    this._recoilT = 0;        // 0 = idle, >0 = animating (counts down)
+    this._recoilDur = 0.22;   // seconds for full recoil cycle
+    this._baseScale = 1.0;    // will be reset in upgrade()
   }
 
   get stats() { return this.def.levels[this.level]; }
@@ -191,12 +265,48 @@ export class Tower {
     if (!this.canUpgrade()) return false;
     this.level++;
     this.invested += this.stats.cost;
-    this.obj.scale.setScalar(1 + this.level * 0.07);
+    this._baseScale = 1 + this.level * 0.07;
+    this.obj.scale.setScalar(this._baseScale);
     this.muzzleY = new THREE.Box3().setFromObject(this.obj).max.y * 0.82;
     return true;
   }
 
+  _getMuzzleWorldPos() {
+    const p = new THREE.Vector3();
+    p.copy(this.obj.position);
+    p.y = this.muzzleY;
+    // Push slightly forward along the tower's facing direction
+    const fwd = new THREE.Vector3(
+      Math.sin(this.obj.rotation.y),
+      0,
+      Math.cos(this.obj.rotation.y)
+    );
+    p.addScaledVector(fwd, 0.4);
+    return p;
+  }
+
   update(dt, enemies) {
+    // Animate recoil
+    if (this._recoilT > 0) {
+      this._recoilT = Math.max(0, this._recoilT - dt);
+      const k = this._recoilT / this._recoilDur; // 1→0
+      // k=1 is right after firing (full punch), k=0 is recovered
+      // Use a smooth ease: punch out quickly, ease back in
+      const punch = k < 0.5
+        ? k * 2              // 0→1 on the pull-back half (fired at k=1)
+        : 2 - k * 2;        // 1→0 on the recover half
+      // Actually: we want k=1 (just fired) = big scale-down + offset,
+      // k=0 (recovered) = normal
+      const recoilAmt = k;  // largest when just fired
+      const bs = this._baseScale > 0 ? this._baseScale : (1 + this.level * 0.07);
+      // X/Z scale squeeze, Y stretch for a quick squish-and-stretch
+      this.obj.scale.set(
+        bs * (1 - recoilAmt * 0.08),
+        bs * (1 + recoilAmt * 0.12),
+        bs * (1 - recoilAmt * 0.08)
+      );
+    }
+
     if (this.cooldown > 0) this.cooldown -= dt;
     if (this.cooldown > 0) return;
     const s = this.stats;
@@ -216,6 +326,20 @@ export class Tower {
     this.obj.rotation.y = Math.atan2(this._face.x, this._face.z);
     this.game.spawnProjectile(this, best);
     this.cooldown = 1 / s.fireRate;
+
+    // --- Muzzle flash + recoil punch ---
+    const muzzlePos = this._getMuzzleWorldPos();
+    // Pick flash color based on tower type
+    const flashColor = this.def.projectile === 'frost'
+      ? 0x88ddff
+      : this.def.projectile === 'arrow'
+        ? 0xffeeaa
+        : 0xff8844;
+    this.game.effects.muzzleFlash(muzzlePos, flashColor);
+
+    // Trigger recoil animation (count-down from full duration)
+    this._recoilT = this._recoilDur;
+    if (this._baseScale === 0) this._baseScale = 1 + this.level * 0.07;
   }
 
   dispose() {
@@ -232,6 +356,14 @@ const PROJ_TUNE = {
   frost: { speed: 22, arc: 0.6, scale: 1 },
 };
 
+// Trail colors per projectile kind
+const TRAIL_COLORS = {
+  arrow:      0xffdd88,
+  cannonball: 0x888888,
+  catapult:   0x997755,
+  frost:      0x88ddff,
+};
+
 export class Projectile {
   constructor(game, tower, target) {
     this.game = game;
@@ -242,6 +374,7 @@ export class Projectile {
     this.splash = s.splash || 0;
     this.slow = s.slow || null;
     const kind = def.projectile;
+    this.kind = kind;
     this.tune = PROJ_TUNE[kind] || PROJ_TUNE.arrow;
 
     if (kind === 'frost') {
@@ -266,6 +399,13 @@ export class Projectile {
     this.alive = true;
     this._p = new THREE.Vector3();
     this._prev = this.from.clone();
+
+    // Trail — arrow and frost get one; heavy shots only every other frame (handled below)
+    this._trail = null;
+    this._trailTimer = 0;
+    const trailColor = TRAIL_COLORS[kind] || 0xffffff;
+    const trailPts = kind === 'arrow' || kind === 'frost' ? 14 : 10;
+    this._trail = new Trail(game.scene, { color: trailColor, maxPoints: trailPts });
   }
 
   update(dt) {
@@ -285,12 +425,23 @@ export class Projectile {
     this._prev.copy(this._p);
     this.obj.position.copy(this._p);
     this.obj.rotation.y += this.tune.arc === 0.6 ? 0 : dt * 6; // tumble for heavy shots
+
+    // Add trail point (throttle for heavy projectiles to every ~0.04s)
+    if (this._trail) {
+      this._trailTimer += dt;
+      const interval = (this.kind === 'cannonball' || this.kind === 'catapult') ? 0.04 : 0.025;
+      if (this._trailTimer >= interval) {
+        this._trailTimer = 0;
+        this._trail.addPoint(this._p);
+      }
+    }
   }
 
   _impact() {
     this.alive = false;
     const hit = this.dest.clone();
     const enemies = this.game.enemies;
+    const isFrost = !!this.slow;
 
     if (this.splash > 0) {
       const r2 = this.splash * this.splash;
@@ -302,9 +453,15 @@ export class Projectile {
           if (this.slow) e.applySlow(this.slow.amount, this.slow.duration);
         }
       }
-      const isFrost = !!this.slow;
-      this.game.effects.pop(hit, { color: isFrost ? 0x8fe0ff : 0xffb050, size: this.splash * 1.4, life: 0.4 });
-      if (isFrost) this.game.effects.ring(hit, { radius: this.splash, color: 0x8fe0ff, life: 0.45 });
+
+      // Rich explosion VFX based on type
+      if (isFrost) {
+        this.game.effects.frostFlash(hit, this.splash);
+        this.game.effects.ring(hit, { radius: this.splash, color: 0x8fe0ff, life: 0.45 });
+      } else {
+        // Cannon or catapult
+        this.game.effects.cannonExplosion(hit, this.splash);
+      }
     } else if (this.target && this.target.alive) {
       this.target.takeDamage(this.damage);
       this.game.effects.pop(this.target.obj.position, { color: 0xffe080, size: 0.5, life: 0.22 });
@@ -316,5 +473,7 @@ export class Projectile {
     this.game.scene.remove(this.obj);
     if (this._ownGeo) this._ownGeo.dispose();
     if (this._ownMat) this._ownMat.dispose();
+    // Dispose trail
+    if (this._trail) { this._trail.dispose(); this._trail = null; }
   }
 }

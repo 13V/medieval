@@ -10,9 +10,73 @@ export const MODELS = {
   tileGrass: 'tiles/base/hex_grass.gltf',
   tileRoad: 'tiles/base/hex_grass.gltf', // path tiles reuse grass mesh, tinted to dirt
   castle: 'buildings/blue/building_castle_blue.gltf',
+
+  // Grass summer texture — loaded separately in board.js via TextureLoader.
+  // Path relative to public/ (not the gltf subfolder).
+  tileSummerTex: 'assets/gltf/tiles/base/hexagons_medieval_Summer.png',
+
+  // All decoration models are listed here so game.js's manifest spread picks them up.
+  // board.js groups them into sub-arrays below.
   decoTrees: [
+    // trees — single
     'decoration/nature/tree_single_A.gltf',
     'decoration/nature/tree_single_B.gltf',
+    // trees — clusters
+    'decoration/nature/trees_A_small.gltf',
+    'decoration/nature/trees_B_small.gltf',
+    'decoration/nature/trees_A_medium.gltf',
+    'decoration/nature/trees_B_medium.gltf',
+    // hills with trees (great for border/framing)
+    'decoration/nature/hills_A_trees.gltf',
+    'decoration/nature/hills_B_trees.gltf',
+    // rocks
+    'decoration/nature/rock_single_A.gltf',
+    'decoration/nature/rock_single_B.gltf',
+    'decoration/nature/rock_single_C.gltf',
+    // water plants (for moat fringe)
+    'decoration/nature/waterplant_A.gltf',
+    'decoration/nature/waterplant_B.gltf',
+    // props — castle end theming
+    'decoration/props/flag_blue.gltf',
+    'decoration/props/flag_yellow.gltf',
+    'decoration/props/barrel.gltf',
+    'decoration/props/crate_A_small.gltf',
+    // props — spawn end theming
+    'decoration/props/tent.gltf',
+    'decoration/props/resource_stone.gltf',
+    'decoration/props/resource_lumber.gltf',
+  ],
+
+  // Sub-arrays for board.js to pick from (paths must be a subset of decoTrees above).
+  decoNature: [
+    'decoration/nature/tree_single_A.gltf',
+    'decoration/nature/tree_single_B.gltf',
+    'decoration/nature/trees_A_small.gltf',
+    'decoration/nature/trees_B_small.gltf',
+    'decoration/nature/trees_A_medium.gltf',
+    'decoration/nature/trees_B_medium.gltf',
+    'decoration/nature/hills_A_trees.gltf',
+    'decoration/nature/hills_B_trees.gltf',
+  ],
+  decoRocks: [
+    'decoration/nature/rock_single_A.gltf',
+    'decoration/nature/rock_single_B.gltf',
+    'decoration/nature/rock_single_C.gltf',
+  ],
+  decoWaterPlants: [
+    'decoration/nature/waterplant_A.gltf',
+    'decoration/nature/waterplant_B.gltf',
+  ],
+  decoCastleProps: [
+    'decoration/props/flag_blue.gltf',
+    'decoration/props/flag_yellow.gltf',
+    'decoration/props/barrel.gltf',
+    'decoration/props/crate_A_small.gltf',
+  ],
+  decoSpawnProps: [
+    'decoration/props/tent.gltf',
+    'decoration/props/resource_stone.gltf',
+    'decoration/props/resource_lumber.gltf',
   ],
 };
 
@@ -24,6 +88,10 @@ export const COLORS = {
   hoverBad: 0xe05a4a,
   range: 0xffe08a,
   frost: 0x8fe0ff,
+  // Environmental colors (used by board.js for water/moat framing)
+  waterDeep: 0x1a4a6e,
+  waterShallow: 0x2a6a9a,
+  waterBackdrop: 0x1d3f5c,
 };
 
 export const ECONOMY = {

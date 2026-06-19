@@ -11,6 +11,8 @@ export class Hud {
     this.game = game;
     this.gold = 0;
     this.selectedTower = null;
+    this._lastWave = 0;
+    this._bannerTimeout = null;
 
     this._buildTowerButtons();
     this._buildAbilityButtons();
@@ -61,14 +63,59 @@ export class Hud {
     $('btn-how').addEventListener('click', () => $('how').classList.toggle('hidden'));
   }
 
+  // ---- Wave banner ----
+  _showWaveBanner(waveNum, isBoss) {
+    const banner = $('wave-banner');
+    if (!banner) return;
+
+    // Clear any running animation so it can restart
+    banner.classList.remove('show', 'boss');
+    // Force reflow to restart animation
+    void banner.offsetWidth;
+
+    $('wb-num').textContent = isBoss ? '⚠ BOSS WAVE' : `WAVE ${waveNum}`;
+    $('wb-sub').textContent = isBoss ? 'Brace yourself — a Warlord approaches!' : 'Defend the castle!';
+
+    if (isBoss) banner.classList.add('boss');
+    banner.classList.add('show');
+
+    clearTimeout(this._bannerTimeout);
+    this._bannerTimeout = setTimeout(() => {
+      banner.classList.remove('show', 'boss');
+    }, 2800);
+  }
+
   // ---- top bar ----
-  setWave(n, total) { $('wave-num').textContent = n; $('wave-total').textContent = total; }
+  setWave(n, total) {
+    $('wave-num').textContent = n;
+    $('wave-total').textContent = total;
+
+    // Show banner whenever wave number increases (i.e., a new wave starts)
+    if (n > this._lastWave && n > 0) {
+      this._lastWave = n;
+      // isBoss detection: waves 10 and 20
+      const isBoss = (n === 10 || n === 20);
+      this._showWaveBanner(n, isBoss);
+    }
+  }
+
   setWaveProgress(frac) { $('wave-bar-fill').style.width = `${Math.max(0, Math.min(1, frac)) * 100}%`; }
-  setWaveState(txt) { $('wave-state').textContent = txt; }
+
+  setWaveState(txt) {
+    $('wave-state').textContent = txt;
+    // Also catch boss state from game text if needed
+    if (txt && /boss/i.test(txt) && this._lastWave > 0) {
+      // Already handled in setWave; no-op here
+    }
+  }
 
   setCastle(hp, max) {
     $('hp-fill').style.width = `${Math.max(0, hp / max) * 100}%`;
     $('hp-text').textContent = `${Math.max(0, Math.ceil(hp))} / ${max}`;
+
+    // Pulse the heart when HP is low (below 30%)
+    const panel = $('castle-hp-panel');
+    if (panel) panel.classList.toggle('low', hp / max < 0.30);
   }
 
   setGold(g) {
@@ -185,12 +232,28 @@ export class Hud {
   showEnd(win, statsHtml, stars) {
     const s = $('end-screen');
     s.classList.remove('hidden');
+
+    // Title & crest
     const title = $('end-title');
     title.textContent = win ? 'VICTORY' : 'DEFEAT';
-    title.classList.toggle('defeat', !win);
-    const filled = '★'.repeat(stars);
-    const empty = `<span class="off">${'★'.repeat(3 - stars)}</span>`;
-    $('stars').innerHTML = win ? filled + empty : `<span class="off">★★★</span>`;
+    title.className = 'title ' + (win ? 'victory' : 'defeat');
+
+    const crest = $('end-crest');
+    if (crest) crest.textContent = win ? '🏆' : '💀';
+
+    // Stars with staggered pop-in animation
+    const starsEl = $('stars');
+    const filledCount = win ? Math.max(0, Math.min(3, stars)) : 0;
+    let starsHtml = '';
+    for (let i = 0; i < 3; i++) {
+      if (i < filledCount) {
+        starsHtml += `<span class="star" style="animation-delay:${0.2 + i * 0.18}s">★</span>`;
+      } else {
+        starsHtml += `<span class="star off">★</span>`;
+      }
+    }
+    starsEl.innerHTML = starsHtml;
+
     $('end-stats').innerHTML = statsHtml;
   }
   hideEnd() { $('end-screen').classList.add('hidden'); }
