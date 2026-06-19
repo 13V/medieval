@@ -196,12 +196,13 @@ export class Game {
   }
 
   _frameCamera() {
+    // Look from the valley (front, -Z) up the slope toward the castle + mountain (+Z).
     const R = this.board.radius;
     const by = this.board.baseY || 0;
-    this.camera.position.set(0, by + R * 0.84, R * 1.26);
-    this.controls.target.set(0, by - 0.1, 0);
-    this.controls.minDistance = R * 0.45;
-    this.controls.maxDistance = R * 2.6;
+    this.camera.position.set(0, by + R * 0.7, -R * 1.5);
+    this.controls.target.set(0, by + 2.2, R * 0.25);
+    this.controls.minDistance = R * 0.5;
+    this.controls.maxDistance = R * 3.2;
     this.controls.update();
   }
 

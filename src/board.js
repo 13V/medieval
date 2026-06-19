@@ -65,15 +65,16 @@ export class Board {
     const colStep = SQRT3 * s;
 
     // ---- elevation field (≤1-tier adjacency by construction → no gaps) ----
+    // Terrain climbs toward the back (high rows) where a mountain rises; the
+    // castle sits on a plateau at its foot. Cliffs drop on the left/right/front.
     const tierAt = (c, r) => {
       const w = offsetToWorld(c, r, s);
       const wx = w.x + ox, wz = w.z + oz;
       const dCastle = Math.hypot(wx - castleAnchor.x, wz - castleAnchor.z) / colStep;
-      const hCastle = MAX_TIER - Math.floor(dCastle / 2.0);          // castle plateau
-      const dHill = Math.hypot(wx - hillAnchor.x, wz - hillAnchor.z) / colStep;
-      const hHill = 1 - Math.floor(dHill / 1.8);                     // a green hill
-      const edge = Math.min(c, cols - 1 - c, r, rows - 1 - r);       // 0 at border (beach)
-      const base = Math.min(Math.max(hHill, 0), edge);              // terrain falls to water at edges
+      const hCastle = MAX_TIER - Math.floor(dCastle / 1.8);            // castle plateau
+      const slope = Math.floor((r * MAX_TIER) / (rows - 1) + 0.001);   // rises toward the mountain
+      const cap = Math.min(c, cols - 1 - c, r);                        // cliffs on left/right/front
+      const base = Math.min(Math.max(slope, 0), cap);
       return Math.max(0, Math.min(MAX_TIER, Math.max(hCastle, base))); // castle exempt from edge cap
     };
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) this.heights.set(cellKey(c, r), tierAt(c, r));
@@ -139,6 +140,7 @@ export class Board {
     this._rockyAccents(cols, rows, pathKeys);
     this._buildIslandBase();
     this._buildCliffs();
+    this._buildBackdropMountain();
 
     // ---- deep-water backdrop ----
     const backdrop = new THREE.Mesh(
@@ -215,6 +217,50 @@ export class Board {
     core.position.y = (rockTop + rockBottom) / 2;
     core.receiveShadow = true;
     this.group.add(core);
+  }
+
+  // A single snow-capped rock peak.
+  _peak(x, z, height, baseR) {
+    const rock = new THREE.Mesh(
+      new THREE.ConeGeometry(baseR, height, 7, 1),
+      new THREE.MeshStandardMaterial({ color: 0x847d72, roughness: 1, flatShading: true })
+    );
+    rock.position.set(x, -0.6 + height / 2, z);
+    rock.castShadow = true; rock.receiveShadow = true;
+    this.group.add(rock);
+    const snowH = height * 0.34;
+    const snow = new THREE.Mesh(
+      new THREE.ConeGeometry(baseR * 0.36, snowH, 7, 1),
+      new THREE.MeshStandardMaterial({ color: 0xeef3f8, roughness: 0.85, flatShading: true })
+    );
+    snow.position.set(x, -0.6 + height - snowH / 2, z);
+    this.group.add(snow);
+  }
+
+  // Big mountain range rising behind the island, with rocky foothills bridging
+  // the board's back cliff up to the peaks — so the map reads as a shelf on the
+  // side of the mountain rather than an island in the sea.
+  _buildBackdropMountain() {
+    const R = this.radius;
+    // looming snow-capped peaks (kept just clear of the playable tiles)
+    this._peak(0,        R * 1.95, 20, R * 0.98);
+    this._peak(-R * 0.95, R * 1.72, 14, R * 0.64);
+    this._peak(R * 1.0,  R * 1.78, 15, R * 0.66);
+    this._peak(-R * 0.3, R * 2.5,  16, R * 0.62);
+    this._peak(R * 0.45, R * 2.55, 14.5, R * 0.58);
+
+    // rocky foothills bridging the back edge up into the mountain
+    let seed = 555;
+    const rng = () => { seed = (seed * 1664525 + 1013904223) & 0xffffffff; return (seed >>> 0) / 0xffffffff; };
+    const cliffs = MODELS.decoCliffs;
+    for (let i = 0; i < 18; i++) {
+      const x = (-1 + 2 * (i / 17)) * R * 1.1;
+      const z = R * (1.0 + rng() * 0.55);
+      const o = this.assets.instance(cliffs[Math.floor(rng() * cliffs.length)], { scale: 2.2 + rng() * 2.0, groundAlign: true });
+      o.position.set(x, -0.8, z);
+      o.rotation.y = rng() * Math.PI * 2;
+      this.group.add(o);
+    }
   }
 
   // Craggy rocky cliff face around the island + a rocky peak under the castle
